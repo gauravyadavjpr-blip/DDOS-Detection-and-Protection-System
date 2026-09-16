@@ -62,6 +62,7 @@ class AdvancedDashboard(QtWidgets.QMainWindow):
     savePcapRequested = QtCore.pyqtSignal()
     packetDoubleClicked = QtCore.pyqtSignal(int)
     packet_signal = QtCore.pyqtSignal(dict)
+    captureError = QtCore.pyqtSignal(str)
 
     def __init__(self, refresh_interval: int = 1000, monitor=None):
         super().__init__()

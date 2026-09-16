@@ -53,6 +53,10 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
+On Windows, install Npcap before starting live capture and select the installer option
+to enable WinPcap API-compatible mode. Without it, Scapy can list adapters but cannot
+open them for packet capture.
+
 ## Configuration
 
 The project reads its settings from [config.ini](config.ini). The most important settings are:

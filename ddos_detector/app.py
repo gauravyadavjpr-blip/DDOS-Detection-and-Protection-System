@@ -5,7 +5,7 @@ import random
 import sys
 
 from PyQt5 import QtWidgets, QtCore
-from scapy.all import rdpcap, raw, get_if_list, IP, TCP, UDP, ICMP
+from scapy.all import rdpcap, raw, conf, get_if_list, IP, TCP, UDP, ICMP
 
 from .alerts import AlertManager
 from .analyzer import PacketAnalyzer
@@ -21,9 +21,9 @@ class RealTimeDDoSMonitor:
     def __init__(self, config_file: str = "config.ini"):
         logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
         self.config = ConfigLoader(config_file)
-        self.interface = self.config.get("Network", "Interface", fallback="auto").strip()
+        configured_interface = self.config.get("Network", "Interface", fallback="auto").strip()
         self.filter_str = self.config.get("Network", "Filter", fallback=None)
-        self.interface = self.resolve_interface(self.interface)
+        self.interface = self.resolve_interface(configured_interface)
         self.packet_rate_limit = int(self.config.get("Detection", "RateLimit", fallback="50"))
         self.block_duration = int(self.config.get("Mitigation", "BlockDuration", fallback="600"))
         self.email_alert = self.config.get("Alerts", "EmailAlert", fallback="no")
@@ -63,6 +63,7 @@ class RealTimeDDoSMonitor:
         self.dashboard.savePcapRequested.connect(self.save_pcap_file)
         self.dashboard.packetDoubleClicked.connect(self.show_packet_details)
         self.dashboard.packet_signal.connect(self.dashboard.add_packet_entry)
+        self.dashboard.captureError.connect(self.show_capture_error)
 
         self.live_capture = None
         self.paused = False
@@ -120,9 +121,13 @@ class RealTimeDDoSMonitor:
             self.paused = False
             self.live_capture = PacketCapture(interface=self.interface,
                                                bpf_filter=self.filter_str,
-                                               callback=self.process_packet)
+                                               callback=self.process_packet,
+                                               error_callback=self.capture_error)
             self.live_capture.start()
-            self.dashboard.statusBar.showMessage("Live capture started.", 3000)
+            self.dashboard.statusBar.showMessage(
+                f"Live capture started on {self.interface_name(self.interface)}.",
+                3000,
+            )
         else:
             self.dashboard.statusBar.showMessage("Live capture already running.", 3000)
 
@@ -137,6 +142,16 @@ class RealTimeDDoSMonitor:
             self.live_capture.stop()
             self.paused = False
             self.dashboard.statusBar.showMessage("Live capture stopped.", 3000)
+
+    def capture_error(self, message):
+        self.dashboard.captureError.emit(message)
+
+    def show_capture_error(self, message):
+        logging.error(message)
+        self.dashboard.statusBar.showMessage(
+            "Capture unavailable. Install Npcap with WinPcap compatibility enabled.",
+            10000,
+        )
 
     def open_file_and_analyze(self):
         self.stop_live_capture()
@@ -224,12 +239,31 @@ class RealTimeDDoSMonitor:
         if configured_interface and configured_interface.lower() != "auto":
             if configured_interface in available:
                 return configured_interface
+            for key, iface in conf.ifaces.items():
+                if getattr(iface, "name", "") == configured_interface:
+                    return key
 
-        for iface in available:
-            if "Loopback" not in iface and "NPF_Loopback" not in iface:
-                return iface
+        candidates = []
+        for key, iface in conf.ifaces.items():
+            address = getattr(iface, "ip", "") or ""
+            name = getattr(iface, "name", "") or ""
+            if not address or address.startswith(("127.", "169.254.")):
+                continue
+            if "loopback" in name.lower() or "bluetooth" in name.lower():
+                continue
+            candidates.append((key, name))
+
+        for key, name in candidates:
+            if "vmware" not in name.lower() and "virtual" not in name.lower():
+                return key
+        if candidates:
+            return candidates[0][0]
 
         return available[0]
+
+    def interface_name(self, interface):
+        iface = conf.ifaces.get(interface)
+        return getattr(iface, "name", interface)
 
     def stop(self):
         if self.live_capture is not None:
